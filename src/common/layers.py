@@ -80,6 +80,10 @@ class Dense(Layer):
             weights.append(self.bias)
         return weights
 
+    @property
+    def weight_count(self) -> int:
+        return 2 if self.use_bias else 1
+
     def _expected_kernel_shape(self, loaded_kernel: np.ndarray) -> tuple[int, int]:
         if self.kernel is None:
             return (loaded_kernel.shape[0], self.units)
@@ -146,6 +150,10 @@ class Embedding(Layer):
         if np.any(indices < 0) or np.any(indices >= self.input_dim):
             raise ValueError(f"{self.name} received token id outside [0, {self.input_dim}).")
         return self.embeddings[indices]
+
+    @property
+    def weight_count(self) -> int:
+        return 1
 
     def get_weights(self) -> list[np.ndarray]:
         return [] if self.embeddings is None else [self.embeddings]

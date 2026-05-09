@@ -137,6 +137,10 @@ class Conv2D(Layer):
             outputs = outputs + self.bias
         return self.activation(outputs)
 
+    @property
+    def weight_count(self) -> int:
+        return 2 if self.use_bias else 1
+
     def get_weights(self) -> list[np.ndarray]:
         if self.kernel is None:
             return []

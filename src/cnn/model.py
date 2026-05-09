@@ -112,8 +112,8 @@ def from_keras_model(keras_model: Any, name: str | None = None) -> CNNModel:
             layers.append(local_layer)
     model = CNNModel(layers=layers, name=name or getattr(keras_model, "name", "CNNModel"))
     build_shape = getattr(keras_model, "input_shape", None)
-    if isinstance(build_shape, tuple) and build_shape:
-        model.build(build_shape)
+    if build_shape is not None:
+        model.build(tuple(build_shape))
     load_keras_weights(model, keras_model)
     return model
 

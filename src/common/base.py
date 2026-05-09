@@ -51,6 +51,11 @@ class Layer(WeightLoadable):
         if weights:
             raise ValueError(f"{self.name} expects no weights. Got {len(weights)} arrays.")
 
+    @property
+    def weight_count(self) -> int:
+        """jumlah array bobot yang dikelola layer ini, diketahui sebelum build"""
+        return 0
+
     def compute_output_shape(self, input_shape: Sequence[int | None]) -> Shape:
         return tuple(input_shape)
 
@@ -135,9 +140,9 @@ class Sequential(Model):
     def set_weights(self, weights: Sequence[np.ndarray]) -> None:
         offset = 0
         for layer in self.layers:
-            expected = len(layer.get_weights())
-            layer.set_weights(weights[offset : offset + expected])
-            offset += expected
+            n = layer.weight_count
+            layer.set_weights(weights[offset : offset + n])
+            offset += n
         if offset != len(weights):
             raise ValueError(f"{self.name} received {len(weights)} arrays but used {offset}.")
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -74,7 +74,7 @@ class TimingResult:
 
 
 @contextmanager
-def timer(name: str = "operation") -> Iterable[TimingResult]:
+def timer(name: str = "operation") -> Generator[TimingResult, None, None]:
     result = TimingResult(name=name, seconds=0.0)
     start = time.perf_counter()
     try:
