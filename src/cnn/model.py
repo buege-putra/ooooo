@@ -144,3 +144,60 @@ def load_keras_weights(model: CNNModel, keras_model: Any) -> None:
 
 def build_cnn_model(layers: Sequence[Layer], name: str = "CNNModel") -> CNNModel:
     return CNNModel(layers=layers, name=name)
+
+
+def _resolve_filters(filters: int | Sequence[int], n_layers: int) -> list[int]:
+    if isinstance(filters, int):
+        return [filters] * n_layers
+    values = list(filters)
+    if len(values) != n_layers:
+        raise ValueError(f"filters must be int or sequence of length {n_layers}. Got {values}.")
+    return values
+
+
+def build_lc2d_numpy_model(
+    input_shape: Sequence[int],
+    num_classes: int,
+    conv_layers: int = 1,
+    filters: int | Sequence[int] = 32,
+    kernel_size: int | Sequence[int] = 3,
+    pooling: str = "max",
+    head: str = "flatten",
+    dense_units: int | None = None,
+    activation: str = "relu",
+    name: str = "lc2d_numpy",
+) -> CNNModel:
+    """buat CNNModel numpy dengan LocallyConnected2D — mirror dari build_conv_cnn"""
+    if conv_layers <= 0:
+        raise ValueError(f"conv_layers must be positive. Got {conv_layers}.")
+    ksize = (int(kernel_size), int(kernel_size)) if isinstance(kernel_size, int) else tuple(kernel_size)
+    filter_values = _resolve_filters(filters, conv_layers)
+
+    layers: list[Layer] = []
+    for i, f in enumerate(filter_values):
+        layers.append(LocallyConnected2D(filters=f, kernel_size=ksize, activation=activation, name=f"lc2d_{i + 1}"))
+        if pooling == "max":
+            layers.append(MaxPooling2D(pool_size=(2, 2), strides=(2, 2), name=f"pool_{i + 1}"))
+        elif pooling == "average":
+            layers.append(AveragePooling2D(pool_size=(2, 2), strides=(2, 2), name=f"pool_{i + 1}"))
+        else:
+            raise ValueError(f"Unsupported pooling: {pooling}")
+
+    if head == "flatten":
+        layers.append(Flatten(name="flatten"))
+    elif head == "global_average":
+        layers.append(GlobalAveragePooling2D(name="global_avg_pool"))
+    elif head == "global_max":
+        layers.append(GlobalMaxPooling2D(name="global_max_pool"))
+    else:
+        raise ValueError(f"Unsupported head: {head}")
+
+    if dense_units is not None:
+        layers.append(Dense(int(dense_units), activation=activation, name="dense_hidden"))
+    layers.append(Dense(int(num_classes), activation="softmax", name="classifier"))
+
+    model = CNNModel(layers=layers, name=name)
+    # trigger build so parameter_count() is available immediately
+    dummy = np.zeros((1, *input_shape), dtype=np.float32)
+    model(dummy)
+    return model

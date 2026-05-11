@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -206,6 +207,34 @@ def batch_iterator(
             yield batch_images
         else:
             yield batch_images, label_array[batch_indices]
+
+
+def make_tf_dataset(
+    paths: Sequence[str | Path],
+    labels: np.ndarray | Sequence[int],
+    target_size: tuple[int, int],
+    batch_size: int,
+    shuffle: bool = False,
+    seed: int | None = None,
+) -> "Any":
+    """buat tf.data.Dataset yang load gambar via PIL — tanpa Keras preprocessing"""
+    import tensorflow as tf  # lazy import agar modul tidak wajib TF
+
+    str_paths = [str(p) for p in paths]
+    int_labels = list(np.asarray(labels, dtype=np.int64).tolist())
+
+    def _load(path_bytes: bytes) -> np.ndarray:
+        return load_image(path_bytes.decode(), target_size=target_size, normalize=True)
+
+    def _map_fn(path_tensor: Any, label_tensor: Any) -> tuple[Any, Any]:
+        img = tf.numpy_function(_load, [path_tensor], tf.float32)
+        img.set_shape((*target_size, 3))
+        return img, label_tensor
+
+    ds = tf.data.Dataset.from_tensor_slices((str_paths, int_labels))
+    if shuffle:
+        ds = ds.shuffle(len(str_paths), seed=seed)
+    return ds.map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE).batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
 
 def split_paths_and_labels(entries: Iterable[tuple[Path, int]]) -> tuple[tuple[Path, ...], np.ndarray]:
