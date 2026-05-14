@@ -65,11 +65,12 @@ def layer_from_keras(keras_layer: Any) -> Layer | None:
             use_bias=bool(config.get("use_bias", True)),
             name=name,
         )
-    if class_name == "LocallyConnected2D":
+    if class_name in {"LocallyConnected2D", "_LocallyConnected2DLayer"}:
         return LocallyConnected2D(
             filters=int(config["filters"]),
             kernel_size=tuple(config["kernel_size"]),
             strides=tuple(config.get("strides", (1, 1))),
+            padding=config.get("padding", "valid"),
             activation=_activation_name(keras_layer),
             use_bias=bool(config.get("use_bias", True)),
             name=name,
@@ -164,10 +165,11 @@ def build_lc2d_numpy_model(
     pooling: str = "max",
     head: str = "flatten",
     dense_units: int | None = None,
+    padding: str = "same",
     activation: str = "relu",
     name: str = "lc2d_numpy",
 ) -> CNNModel:
-    """buat CNNModel numpy dengan LocallyConnected2D — mirror dari build_conv_cnn"""
+    """buat CNNModel NumPy dengan LocallyConnected2D."""
     if conv_layers <= 0:
         raise ValueError(f"conv_layers must be positive. Got {conv_layers}.")
     ksize = (int(kernel_size), int(kernel_size)) if isinstance(kernel_size, int) else tuple(kernel_size)
@@ -175,7 +177,15 @@ def build_lc2d_numpy_model(
 
     layers: list[Layer] = []
     for i, f in enumerate(filter_values):
-        layers.append(LocallyConnected2D(filters=f, kernel_size=ksize, activation=activation, name=f"lc2d_{i + 1}"))
+        layers.append(
+            LocallyConnected2D(
+                filters=f,
+                kernel_size=ksize,
+                padding=padding,
+                activation=activation,
+                name=f"lc2d_{i + 1}",
+            )
+        )
         if pooling == "max":
             layers.append(MaxPooling2D(pool_size=(2, 2), strides=(2, 2), name=f"pool_{i + 1}"))
         elif pooling == "average":

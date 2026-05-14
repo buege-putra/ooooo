@@ -210,8 +210,6 @@ class LocallyConnected2D(Conv2D):
         name: str | None = None,
         dtype: np.dtype | str = np.float32,
     ) -> None:
-        if padding != "valid":
-            raise ValueError("LocallyConnected2D supports valid padding only.")
         super().__init__(
             filters=filters,
             kernel_size=kernel_size,

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +23,72 @@ class ImageSplit:
     class_names: tuple[str, ...]
 
 
+def _rng_from_seed_and_path(seed: int | None, path: str | Path) -> np.random.Generator:
+    seed_value = 0 if seed is None else int(seed)
+    digest = hashlib.blake2b(str(path).encode("utf-8"), digest_size=8).digest()
+    path_value = int.from_bytes(digest, byteorder="little", signed=False)
+    return np.random.default_rng((seed_value + path_value) % (2**32))
+
+
+def augment_image(
+    image: Image.Image,
+    rng: np.random.Generator,
+    horizontal_flip: bool = True,
+    rotation_degrees: float = 15.0,
+    zoom_range: float = 0.1,
+    translation_range: float = 0.08,
+) -> Image.Image:
+    """augmentasi image"""
+
+    augmented = image
+    width, height = augmented.size
+
+    if horizontal_flip and rng.random() < 0.5:
+        augmented = augmented.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+
+    if rotation_degrees > 0:
+        angle = float(rng.uniform(-rotation_degrees, rotation_degrees))
+        augmented = augmented.rotate(angle, resample=Image.Resampling.BILINEAR, fillcolor=(0, 0, 0))
+
+    if zoom_range > 0:
+        zoom = float(rng.uniform(1.0 - zoom_range, 1.0 + zoom_range))
+        if zoom > 1.0:
+            crop_w = max(1, int(round(width / zoom)))
+            crop_h = max(1, int(round(height / zoom)))
+            left = int(rng.integers(0, width - crop_w + 1))
+            top = int(rng.integers(0, height - crop_h + 1))
+            augmented = augmented.crop((left, top, left + crop_w, top + crop_h)).resize(
+                (width, height),
+                resample=Image.Resampling.BILINEAR,
+            )
+        elif zoom < 1.0:
+            scaled_w = max(1, int(round(width * zoom)))
+            scaled_h = max(1, int(round(height * zoom)))
+            resized = augmented.resize((scaled_w, scaled_h), resample=Image.Resampling.BILINEAR)
+            canvas = Image.new("RGB", (width, height), (0, 0, 0))
+            left = int(rng.integers(0, width - scaled_w + 1))
+            top = int(rng.integers(0, height - scaled_h + 1))
+            canvas.paste(resized, (left, top))
+            augmented = canvas
+
+    if translation_range > 0:
+        max_dx = int(round(width * translation_range))
+        max_dy = int(round(height * translation_range))
+        dx = int(rng.integers(-max_dx, max_dx + 1)) if max_dx > 0 else 0
+        dy = int(rng.integers(-max_dy, max_dy + 1)) if max_dy > 0 else 0
+        translated = Image.new("RGB", (width, height), (0, 0, 0))
+        translated.paste(augmented, (dx, dy))
+        augmented = translated
+
+    return augmented
+
+
 def load_image(
     path: str | Path,
     target_size: tuple[int, int],
     normalize: bool = True,
+    augment: bool = False,
+    seed: int | None = None,
     dtype: np.dtype | str = np.float32,
 ) -> np.ndarray:
     """load image dari path menjadi array channel-last"""
@@ -34,6 +97,8 @@ def load_image(
     with Image.open(image_path) as image:
         image = image.convert("RGB")
         image = image.resize((target_size[1], target_size[0]))
+        if augment:
+            image = augment_image(image, rng=_rng_from_seed_and_path(seed, image_path))
         array = np.asarray(image, dtype=dtype)
 
     if normalize:
@@ -45,11 +110,16 @@ def load_image_batch(
     paths: Sequence[str | Path],
     target_size: tuple[int, int],
     normalize: bool = True,
+    augment: bool = False,
+    seed: int | None = None,
     dtype: np.dtype | str = np.float32,
 ) -> np.ndarray:
     """load sekumpulan image menjadi array batch"""
 
-    arrays = [load_image(path, target_size=target_size, normalize=normalize, dtype=dtype) for path in paths]
+    arrays = [
+        load_image(path, target_size=target_size, normalize=normalize, augment=augment, seed=seed, dtype=dtype)
+        for path in paths
+    ]
     if not arrays:
         height, width = target_size
         return np.empty((0, height, width, 3), dtype=dtype)
@@ -216,15 +286,16 @@ def make_tf_dataset(
     batch_size: int,
     shuffle: bool = False,
     seed: int | None = None,
+    augment: bool = False,
 ) -> "Any":
-    """buat tf.data.Dataset yang load gambar via PIL — tanpa Keras preprocessing"""
+    """buat tf.data.Dataset yang me-load gambar via PIL"""
     import tensorflow as tf  # lazy import agar modul tidak wajib TF
 
     str_paths = [str(p) for p in paths]
     int_labels = list(np.asarray(labels, dtype=np.int64).tolist())
 
     def _load(path_bytes: bytes) -> np.ndarray:
-        return load_image(path_bytes.decode(), target_size=target_size, normalize=True)
+        return load_image(path_bytes.decode(), target_size=target_size, normalize=True, augment=augment, seed=seed)
 
     def _map_fn(path_tensor: Any, label_tensor: Any) -> tuple[Any, Any]:
         img = tf.numpy_function(_load, [path_tensor], tf.float32)
@@ -246,3 +317,49 @@ def split_paths_and_labels(entries: Iterable[tuple[Path, int]]) -> tuple[tuple[P
         paths.append(path)
         labels.append(label)
     return tuple(paths), np.asarray(labels, dtype=np.int64)
+
+
+def extract_features(
+    image_paths: Sequence[str | Path],
+    encoder_model: Any,
+    target_size: tuple[int, int],
+    batch_size: int = 32,
+    preprocess_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    dtype: np.dtype | str = np.float32,
+) -> np.ndarray:
+    """mengekstraksi feature vector dari encoder keras untuk daftar path image"""
+    features: list[np.ndarray] = []
+    paths = list(image_paths)
+    for start in range(0, len(paths), batch_size):
+        batch_paths = paths[start : start + batch_size]
+        images = load_image_batch(batch_paths, target_size=target_size, normalize=True)
+        prepared: np.ndarray = preprocess_fn(images) if preprocess_fn is not None else images
+        batch_features = encoder_model.predict(prepared, verbose=0)
+        features.append(np.asarray(batch_features, dtype=dtype))
+    if not features:
+        return np.empty((0,), dtype=dtype)
+    return np.concatenate(features, axis=0)
+
+
+def extract_and_save_features(
+    image_paths: Sequence[str | Path],
+    output_path: str | Path,
+    encoder_model: Any,
+    target_size: tuple[int, int],
+    batch_size: int = 32,
+    preprocess_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    dtype: np.dtype | str = np.float32,
+) -> np.ndarray:
+    """mengekstraksi feature dari encoder lalu menyimpannya ke disk sebagai npy"""
+    features = extract_features(
+        image_paths,
+        encoder_model,
+        target_size=target_size,
+        batch_size=batch_size,
+        preprocess_fn=preprocess_fn,
+        dtype=dtype,
+    )
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.save(out, features)
+    return features

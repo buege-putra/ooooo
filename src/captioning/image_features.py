@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from src.cnn.data import load_image, load_image_batch
+from src.cnn.data import extract_and_save_features as _extract_and_save, extract_features as _extract, load_image, load_image_batch
 
 
 EncoderName = Literal["inception_v3", "vgg16"]
@@ -27,13 +27,7 @@ def build_frozen_encoder(encoder: EncoderName = "inception_v3", pooling: str = "
 
 
 def preprocess_image_array(images: np.ndarray, encoder: EncoderName = "inception_v3", already_normalized: bool = False) -> np.ndarray:
-    """menjalankan preprocessing sesuai encoder yang dipakai
-
-    args:
-        already_normalized: set True jika nilai piksel sudah berada di rentang [0, 1],
-            sehingga perlu diskalakan kembali ke [0, 255] sebelum preprocessing encoder.
-            jika False (default), input diasumsikan sudah berada di rentang [0, 255].
-    """
+    """menjalankan preprocessing sesuai encoder yang dipakai"""
     import tensorflow as tf
 
     values = np.asarray(images, dtype=np.float32)
@@ -54,16 +48,11 @@ def extract_features(
     batch_size: int = 32,
 ) -> np.ndarray:
     """mengekstraksi feature vector image dalam batch kecil"""
-    features: list[np.ndarray] = []
-    for start in range(0, len(image_paths), batch_size):
-        batch_paths = image_paths[start : start + batch_size]
-        images = load_image_batch(batch_paths, target_size=target_size, normalize=True)
-        prepared = preprocess_image_array(images, encoder=encoder, already_normalized=True)
-        batch_features = encoder_model.predict(prepared, verbose=0)
-        features.append(np.asarray(batch_features))
-    if not features:
-        return np.empty((0, 0), dtype=np.float32)
-    return np.concatenate(features, axis=0).astype(np.float32, copy=False)
+
+    def _preprocess(images: np.ndarray) -> np.ndarray:
+        return preprocess_image_array(images, encoder=encoder, already_normalized=True)
+
+    return _extract(image_paths, encoder_model, target_size=target_size, batch_size=batch_size, preprocess_fn=_preprocess)
 
 
 def extract_and_save_features(
@@ -77,11 +66,11 @@ def extract_and_save_features(
     """mengekstraksi feature lalu menyimpannya sebagai file npy"""
     model = build_frozen_encoder(encoder) if encoder_model is None else encoder_model
     size = target_size or ((299, 299) if encoder == "inception_v3" else (224, 224))
-    features = extract_features(image_paths, model, target_size=size, encoder=encoder, batch_size=batch_size)
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output, features)
-    return features
+
+    def _preprocess(images: np.ndarray) -> np.ndarray:
+        return preprocess_image_array(images, encoder=encoder, already_normalized=True)
+
+    return _extract_and_save(image_paths, output_path, model, target_size=size, batch_size=batch_size, preprocess_fn=_preprocess)
 
 
 def load_preprocessed_image(path: str | Path, target_size: tuple[int, int], encoder: EncoderName = "inception_v3") -> np.ndarray:
