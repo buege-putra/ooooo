@@ -294,11 +294,12 @@ def make_tf_dataset(
     str_paths = [str(p) for p in paths]
     int_labels = list(np.asarray(labels, dtype=np.int64).tolist())
 
-    def _load(path_bytes: bytes) -> np.ndarray:
-        return load_image(path_bytes.decode(), target_size=target_size, normalize=True, augment=augment, seed=seed)
+    def _load(path_bytes: bytes, sample_seed: int) -> np.ndarray:
+        return load_image(path_bytes.decode(), target_size=target_size, normalize=True, augment=augment, seed=int(sample_seed))
 
     def _map_fn(path_tensor: Any, label_tensor: Any) -> tuple[Any, Any]:
-        img = tf.numpy_function(_load, [path_tensor], tf.float32)
+        sample_seed = tf.random.uniform(shape=(), minval=0, maxval=2**31 - 1, dtype=tf.int32)
+        img = tf.numpy_function(_load, [path_tensor, sample_seed], tf.float32)
         img.set_shape((*target_size, 3))
         return img, label_tensor
 

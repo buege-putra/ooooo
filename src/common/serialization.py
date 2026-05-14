@@ -7,6 +7,17 @@ from typing import Any
 import numpy as np
 
 
+class _NumpyEncoder(json.JSONEncoder):
+    def default(self, obj: object) -> object:
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
 def ensure_parent_dir(path: str | Path) -> Path:
     resolved = Path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -16,7 +27,7 @@ def ensure_parent_dir(path: str | Path) -> Path:
 def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
     resolved = ensure_parent_dir(path)
     with resolved.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=indent, ensure_ascii=False)
+        json.dump(data, file, indent=indent, ensure_ascii=False, cls=_NumpyEncoder)
 
 
 def load_json(path: str | Path) -> Any:
