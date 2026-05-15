@@ -16,11 +16,15 @@ def predict_keras(model: Any, images: np.ndarray, batch_size: int | None = None)
     return np.argmax(probabilities, axis=-1)
 
 
-def predict_numpy(model: Any, images: np.ndarray) -> np.ndarray:
-    """prediksi label dari model lokal"""
+def predict_numpy(model: Any, images: np.ndarray, batch_size: int = 32) -> np.ndarray:
+    """prediksi label dari model lokal, diproses per batch untuk menghindari OOM"""
 
     if hasattr(model, "predict"):
-        return np.asarray(model.predict(images))
+        preds = [
+            np.asarray(model.predict(images[i : i + batch_size]))
+            for i in range(0, len(images), batch_size)
+        ]
+        return np.concatenate(preds, axis=0)
     probabilities = np.asarray(model(images))
     return np.argmax(probabilities, axis=-1)
 
